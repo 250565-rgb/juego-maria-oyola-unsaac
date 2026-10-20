@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Angela, guardiana de las 40 semanas</title>
+<style>html,body{margin:0;height:100%;background:#0c1a22;overflow:hidden;touch-action:none}canvas{display:block;width:100vw;height:100vh;object-fit:contain}</style></head><body><canvas id="c"></canvas>
+<script>
+const cv=document.getElementById('c'),c=cv.getContext('2d'),W=960,H=540;cv.width=W;cv.height=H;
+let T=0,st='menu',week=1,mute=false,AC,amb,keys={},lives=10,cesUsed=false;
+let maxWeek=1,trStart=0;try{week=+localStorage.getItem('angSem')||1;maxWeek=Math.max(week,+localStorage.getItem('angMax')||1);week=Math.min(maxWeek,40)}catch(e){}
+// Armas: nombre corto, icono, costo, recarga, semana en que se gana, descripción
+const WP=[
+['Guantes','🧤',10,1,1,'Material estéril: debilita un poco a cualquier enemigo.'],
+['Antibiótico','💊',20,3,1,'Elimina infecciones: urinaria, corioamnionitis y sepsis.'],
+['Hierro','🩸',25,3,5,'Hierro y ácido fólico: curan la anemia.'],
+['Penicilina','💉',25,3,9,'Trata la sífilis y otras ITS.'],
+['Tensiómetro','🩺',30,8,12,'Vigila la presión y frena a todos los enemigos.'],
+['Oxitocina','🧪',30,3,18,'Uterotónico: controla la hemorragia.'],
+['Labetalol','🫀',35,3,20,'Antihipertensivo: controla la preeclampsia.'],
+['Insulina','🍬',30,3,22,'Controla la diabetes gestacional.'],
+['Sulfato Mg','⚡',40,3,28,'Previene y trata las convulsiones de la eclampsia.']
+].map(a=>({s:a[0],i:a[1],cost:a[2],cd:a[3],w:a[4],d:a[5]}));
+// Enemigos: nombre, color, semana, velocidad, gravedad (1-4), complicación, arma que lo cura, evoluciona a
+const TY=[
+['Infección urinaria','#6fbf3a',1,24,1,'Parto prematuro',1,3],
+['Anemia','#e58fae',5,22,1,'Bajo peso al nacer',2,null],
+['ITS (sífilis)','#c9d13a',9,26,2,'Infección congénita',3,null],
+['Corioamnionitis','#f08a24',14,28,3,'Sepsis neonatal',1,7],
+['Hemorragia','#d62828',18,30,3,'Shock hipovolémico',5,null],
+['Preeclampsia','#8e44ad',20,27,3,'Daño en hígado y riñón',6,8],
+['Diabetes gestacional','#f2d12e',22,25,2,'Bebé muy grande',7,null],
+['Sepsis','#3d3d55',30,30,4,'Falla de órganos',1,null],
+['Eclampsia','#ff2e88',34,34,4,'Convulsiones',8,null]
+].map(a=>({n:a[0],col:a[1],w:a[2],spd:a[3],sev:a[4],comp:a[5],cure:a[6],ev:a[7]}));
+const BOSS={n:'ECLAMPSIA MAYOR',col:'#ff1744',spd:30,sev:5,comp:'Muerte materna',cure:8,ev:null,boss:1};
+const SEV=['','Leve','Moderada','Grave','Crítica','Letal'],NEED=[0,1,1,2,3,6];
+let qk={},tgt=null,kills=0,Z=[],S=[],K=[],P=[],F=[],lt=0,dur=25,sp=0,dp=0,bossSp=0,ces=null,beep=0,mel=0,mi=0,ins=50,sel=1,wcd=[],slow=0,tri=1,nt=[3,4.5];
+const An={x:400,y:430,tx:400,ty:430,dir:1,mv:0},J={x:520,y:400,tx:520,ty:400,wt:0,hurt:0};
+const rnd=(a,b)=>a+Math.random()*(b-a),unl=i=>week>=WP[i].w;
+function startLevel(){qk={};Z=[];S=[];K=[];P=[];F=[];lt=0;dur=Math.min(40,22+week*.35);sp=1.5;dp=1;bossSp=0;ces=null;ins=50;slow=0;wcd=WP.map(()=>0);sel=1;J.hurt=0}
+// ---------- Audio generado ----------
+function initA(){if(AC){AC.resume();return}AC=new(window.AudioContext||window.webkitAudioContext)();amb=AC.createGain();amb.gain.value=mute?0:.05;amb.connect(AC.destination);[55,82.4,110.5].forEach(f=>{const o=AC.createOscillator();o.frequency.value=f;o.connect(amb);o.start()})}
+function tone(f,d,ty='sine',v=.12,sl=0){if(!AC||mute)return;const t=AC.currentTime,o=AC.createOscillator(),g=AC.createGain();o.type=ty;o.frequency.setValueAtTime(f,t);if(sl)o.frequency.exponentialRampToValueAtTime(Math.max(30,f+sl),t+d);g.gain.setValueAtTime(v,t);g.gain.exponentialRampToValueAtTime(.001,t+d);o.connect(g);g.connect(AC.destination);o.start(t);o.stop(t+d)}
+const jingle=()=>[523,659,784,1047].forEach((f,i)=>setTimeout(()=>tone(f,.35,'triangle',.15),i*140));
+const victory=()=>{[[523,0],[523,160],[523,320],[659,480],[784,760],[659,920],[784,1080],[1047,1360]].forEach(([f,t])=>setTimeout(()=>{tone(f,.4,'square',.07);tone(f/2,.4,'triangle',.12)},t));setTimeout(()=>[523,659,784,1047,1319].forEach(f=>tone(f,1.4,'triangle',.09)),1360)};
+function audio(dt){beep-=dt;if(beep<=0){beep=.4+Math.min(lives,3)*.28;tone(lives<3?1100:880,.08,lives<3?'square':'sine',.07)}mel-=dt;if(mel<=0){mel=Z.length>4?.3:.55;const sc=[262,330,392,330,294,349,440,349];tone(sc[mi++%8]*(Z.length>4?.5:1),.5,'triangle',.04)}}
+// ---------- Dibujo ----------
+function shadow(x,y,r){c.fillStyle='rgba(0,0,0,.28)';c.beginPath();c.ellipse(x,y,r,r*.35,0,0,7);c.fill()}
+function rr(x,y,w,h,r){c.beginPath();c.roundRect(x,y,w,h,r);c.fill()}
+function bed(x,y){shadow(x+60,y+50,70);c.fillStyle='#4a7fa0';rr(x,y+20,120,36,6);c.fillStyle='#fff';rr(x+4,y+8,112,34,8);c.fillStyle='#cfe6f2';rr(x+8,y+12,28,20,6)}
+function bg(){let g=c.createLinearGradient(0,0,0,180);g.addColorStop(0,'#e3f5f8');g.addColorStop(1,'#b3d9e5');c.fillStyle=g;c.fillRect(0,0,W,180);
+[780,880].forEach(x=>{c.fillStyle='#9bd5ff';c.fillRect(x,5,60,50);c.strokeStyle='#fff';c.lineWidth=3;c.strokeRect(x,5,60,50)});
+c.fillStyle='#5f7f8d';c.fillRect(425,62,110,118);c.fillStyle='#e8f1f4';c.fillRect(433,70,94,110);c.fillStyle='#2eb872';c.fillRect(472,20,16,34);c.fillRect(463,29,34,16);
+g=c.createLinearGradient(0,180,0,H);g.addColorStop(0,'#eef4f6');g.addColorStop(1,'#bccfd6');c.fillStyle=g;c.fillRect(0,180,W,H-180);
+c.strokeStyle='rgba(90,120,135,.35)';c.lineWidth=1.5;for(let i=-12;i<=12;i++){c.beginPath();c.moveTo(480+i*45,180);c.lineTo(480+i*140,H);c.stroke()}
+for(let k=1;k<9;k++){const y=180+360*Math.pow(k/9,1.6);c.beginPath();c.moveTo(0,y);c.lineTo(W,y);c.stroke()}bed(820,210)}
+function human(x,y,o){const s=.6+.55*y/H,sw=Math.sin(T*9+(o.ph||0)),b=sw*(o.mv?3:1);c.save();c.translate(x,y);c.scale(o.dir?o.dir*s:s,s);
+if(o.halo){const r=36+4*Math.sin(T*4),g=c.createRadialGradient(0,0,4,0,0,r);g.addColorStop(0,'rgba(120,255,235,.7)');g.addColorStop(1,'rgba(120,255,235,0)');c.fillStyle=g;c.beginPath();c.ellipse(0,0,r*1.4,r*.55,0,0,7);c.fill()}
+shadow(0,0,22);c.lineCap='round';c.lineWidth=7;c.strokeStyle=o.pants;const l=sw*(o.mv?7:1);c.beginPath();c.moveTo(-6,-26);c.lineTo(-6+l,0);c.moveTo(6,-26);c.lineTo(6-l,0);c.stroke();
+cyl(-15,-72+b,30,48,10,o.col);if(o.belly)sph(10,-40+b,o.belly,o.col);
+sph(0,-87+b,13,'#f1c9a5');c.fillStyle=o.hair;c.beginPath();c.arc(0,-90+b,13,Math.PI,0);c.fill();rr(-14,-92+b,5,28,3);c.fillStyle='#222';c.fillRect(3,-88+b,3,3);
+if(o.cap){c.fillStyle=o.cap;rr(-11,-106+b,22,9,3)}if(o.cross){c.fillStyle='#fff';c.fillRect(-2,-62+b,4,14);c.fillRect(-7,-57+b,14,4)}c.restore()}
+function zomb(z){const s=(.6+.55*z.y/H)*(z.boss?1.7:1),sw=Math.sin(T*6+z.ph);c.save();c.translate(z.x,z.y);c.scale(z.dir*s,s);shadow(0,0,24);if(z===tgt){c.strokeStyle='#ffd166';c.lineWidth=4;c.beginPath();c.ellipse(0,0,36,13,0,0,7);c.stroke()}
+c.strokeStyle='#3a4a3a';c.lineWidth=7;c.lineCap='round';c.beginPath();c.moveTo(-6,-26);c.lineTo(-6+sw*6,0);c.moveTo(6,-26);c.lineTo(6-sw*6,0);c.stroke();
+cyl(-15,-72+sw*2,30,48,8,z.col);c.strokeStyle=z.col;c.lineWidth=6;c.beginPath();c.moveTo(8,-62);c.lineTo(32,-66+sw*3);c.moveTo(8,-52);c.lineTo(30,-52-sw*3);c.stroke();
+sph(2,-87+sw*2,13,'#b9cf9c');c.fillStyle='#ff1a1a';c.fillRect(4,-91+sw*2,4,4);c.fillRect(-2,-91+sw*2,4,4);c.fillStyle='#4a0f0f';c.fillRect(0,-82+sw*2,10,3);c.restore();
+const lh=130*s,sub=SEV[z.sev]+' · '+z.comp,tx=(z.cure===sel?'✔ ':'')+'Usar: '+WP[z.cure].i+' '+WP[z.cure].s,w=Math.max(z.n.length,sub.length*.9,tx.length)*6.8+14,dk=['#f2d12e','#c9d13a','#e58fae'].includes(z.col);
+c.textAlign='center';c.fillStyle=z.col;c.beginPath();c.roundRect(z.x-w/2,z.y-lh-47,w,47,8);c.fill();if(z.cure===sel){c.strokeStyle='#2eff7a';c.lineWidth=3;c.stroke()}c.fillStyle=dk?'#222':'#fff';c.font='bold 12px system-ui';c.fillText(z.n,z.x,z.y-lh-34);c.font='11px system-ui';c.fillText(sub,z.x,z.y-lh-21);c.font='bold 12px system-ui';c.fillText(tx,z.x,z.y-lh-6);
+c.fillStyle='#0008';c.fillRect(z.x-22,z.y-lh+4,44,5);c.fillStyle='#4cff7a';c.fillRect(z.x-22,z.y-lh+4,44*Math.max(0,z.hp/z.need),5);
+if(z.id===sel&&0){}}
+const nurse=(i)=>({x:J.x+Math.cos(T*.8+i*3.14)*80,y:J.y+Math.sin(T*.8+i*3.14)*30+8});
+function scene(){bg();const D=[];
+D.push({y:An.y,f:()=>human(An.x,An.y,{col:'#19a79a',pants:'#117c74',hair:'#2b1b12',cap:'#19a79a',cross:1,halo:1,mv:An.mv,dir:An.dir})});
+D.push({y:J.y,f:()=>human(J.x,J.y,{col:J.hurt>0&&Math.sin(T*30)>0?'#ff7a8a':'#f7b2d6',pants:'#a45d86',hair:'#5a2f1c',belly:11+week*.28,ph:1,mv:1})});
+[0,1].forEach(i=>{const n=nurse(i);D.push({y:n.y,f:()=>human(n.x,n.y,{col:'#f4f4f4',pants:'#d77aa0',hair:'#6a4a2a',cap:'#ff6f9f',cross:1,ph:i*2,mv:1})})});
+Z.forEach(z=>D.push({y:z.y,f:()=>zomb(z)}));
+if(ces)D.push({y:J.y+1,f:()=>{const k=Math.min(1,(3-ces.t)/1.5);human(-60+(J.x-70+60)*k,J.y+4,{col:'#fff',pants:'#2b6b9a',hair:'#222',cap:'#2eb872',cross:1,ph:3,mv:k<1})}});
+D.sort((a,b)=>a.y-b.y).forEach(d=>d.f())}
+function btn(x,y,k,l,p,col){c.fillStyle='#0b1a22aa';c.beginPath();c.arc(x,y,38,0,7);c.fill();c.strokeStyle=col;c.lineWidth=5;c.beginPath();c.arc(x,y,34,-1.57,-1.57+6.28*p);c.stroke();c.fillStyle='#fff';c.textAlign='center';c.font='bold 12px system-ui';c.fillText(l,x,y-2);c.font='11px system-ui';c.fillText(k,x,y+13)}
+function hud(){c.textAlign='left';c.font='bold 20px system-ui';c.fillStyle='#0d3b4a';c.fillText('Semana '+week+' de 40',20,26);c.font='13px system-ui';c.fillText(tri+'.º trimestre',20,44);
+c.fillStyle='#0003';rr(130,34,300,10,5);c.fillStyle='#2eb872';rr(130,34,300*Math.min(1,(week-1+prog())/40),10,5);
+c.textAlign='right';c.font='bold 13px system-ui';c.fillStyle='#7a2150';c.fillText('Vidas de Juana',940,22);c.font='20px system-ui';c.fillStyle='#ff3d6e';c.fillText('♥'.repeat(lives)+'♡'.repeat(Math.max(0,10-lives)),940,48);
+c.font='bold 22px system-ui';c.fillStyle='#0d3b4a';c.fillText('💊 '+Math.floor(ins),940,100);c.font='12px system-ui';c.fillText('Insumos (toca los que caen)',940,118);
+WP.forEach((w,i)=>{const x=20+i*80,u=unl(i);c.fillStyle=i===sel?'#ffd166':u?'#0b1a22dd':'#0b1a2277';rr(x,70,74,84,10);c.textAlign='center';c.font='28px system-ui';c.fillStyle='#fff';c.globalAlpha=u?1:.35;c.fillText(w.i,x+37,106);c.font='bold 11px system-ui';c.fillStyle=i===sel?'#222':'#fff';c.fillText(w.s,x+37,124);c.fillStyle=u?(ins>=w.cost?(i===sel?'#222':'#7cf5e4'):'#ff6b6b'):'#fff';c.fillText(u?w.cost:'Sem '+w.w,x+37,142);c.globalAlpha=1;
+if(u&&wcd[i]>0){c.fillStyle='#000a';rr(x,70,74,84*wcd[i]/w.cd,10)}c.fillStyle=i===sel?'#222':'#fff9';c.font='10px system-ui';c.fillText(i+1,x+9,82)});
+if(week>=28&&!cesUsed)btn(900,480,'C','Dr. Cesárea',1,'#ff2e88');c.textAlign='left';c.font='13px system-ui';c.fillStyle='#0d3b4a';c.fillText('1-9 o toca una carta para elegir arma · toca al zombi para aplicarla · M: sonido',20,H-14)}
+function panel(title,lines,foot){c.fillStyle='#07141bdd';c.fillRect(0,0,W,H);c.fillStyle='#10303c';c.beginPath();c.roundRect(120,50,720,440,18);c.fill();c.strokeStyle='#19a79a';c.lineWidth=3;c.stroke();c.textAlign='center';c.fillStyle='#7cf5e4';c.font='bold 32px Georgia,serif';c.fillText(title,W/2,100);c.font='16px system-ui';lines.forEach((l,i)=>{c.fillStyle=l.col||'#e6f6f8';c.fillText(l.t||l,W/2,142+i*25)});c.font='bold 17px system-ui';c.fillStyle='#ffd166';c.fillText(foot,W/2,470)}
+// ---------- Relieve 3D (luces y sombras) ----------
+function sh(h,a){const n=parseInt(h.slice(1),16),f=v=>Math.max(0,Math.min(255,Math.round(a>0?v+(255-v)*a:v*(1+a))));return 'rgb('+f(n>>16)+','+f(n>>8&255)+','+f(n&255)+')'}
+function sph(x,y,r,col){const g=c.createRadialGradient(x-r*.35,y-r*.4,r*.1,x,y,r);g.addColorStop(0,sh(col,.6));g.addColorStop(.55,col);g.addColorStop(1,sh(col,-.5));c.fillStyle=g;c.beginPath();c.arc(x,y,r,0,7);c.fill()}
+function cyl(x,y,w,h,r,col){const g=c.createLinearGradient(x,0,x+w,0);g.addColorStop(0,sh(col,-.4));g.addColorStop(.3,sh(col,.4));g.addColorStop(1,sh(col,-.45));c.fillStyle=g;rr(x,y,w,h,r)}
+// ---------- Copa de triunfo ----------
+function confetti(){for(let i=0;i<50;i++){c.save();c.translate((i*97+Math.sin(T*2+i)*30)%W,(T*140+i*61)%H);c.rotate(T*3+i);c.fillStyle=['#ffd166','#ff6f9f','#7cf5e4','#fff'][i%4];c.fillRect(-4,-2,8,4);c.restore()}}
+function trophy(x,y,s){c.save();c.translate(x,y);c.scale(s,s);
+c.save();c.translate(0,-150);c.rotate(T*.4);for(let i=0;i<12;i++){c.rotate(Math.PI/6);c.fillStyle='rgba(255,230,120,.13)';c.beginPath();c.moveTo(0,0);c.lineTo(-20,-260);c.lineTo(20,-260);c.fill()}c.restore();
+shadow(0,0,90);let g=c.createLinearGradient(-70,0,70,0);g.addColorStop(0,'#8a5a0a');g.addColorStop(.4,'#ffe27a');g.addColorStop(1,'#7a4e08');c.fillStyle=g;rr(-70,-20,140,24,6);rr(-50,-44,100,26,6);rr(-14,-90,28,50,4);
+c.strokeStyle='#d9a21b';c.lineWidth=12;c.beginPath();c.arc(-62,-150,30,Math.PI*.5,Math.PI*1.5);c.stroke();c.beginPath();c.arc(62,-150,30,-Math.PI*.5,Math.PI*.5);c.stroke();
+g=c.createLinearGradient(-62,0,62,0);g.addColorStop(0,'#9a6a0c');g.addColorStop(.3,'#ffe98a');g.addColorStop(.7,'#f2b81c');g.addColorStop(1,'#8a5a0a');c.fillStyle=g;c.beginPath();c.moveTo(-62,-210);c.lineTo(62,-210);c.quadraticCurveTo(60,-100,0,-90);c.quadraticCurveTo(-60,-100,-62,-210);c.fill();
+c.fillStyle='#fff3b0';c.beginPath();c.ellipse(0,-210,62,12,0,0,7);c.fill();c.fillStyle='#b8860b';c.beginPath();c.ellipse(0,-208,52,8,0,0,7);c.fill();
+c.fillStyle='rgba(255,255,255,.4)';c.beginPath();c.ellipse(-30,-160,8,40,.1,0,7);c.fill();c.fillStyle='#fff';c.font='bold 46px system-ui';c.textAlign='center';c.fillText('★',0,-140);c.restore()}
+// ---------- Portada: camino de niveles ----------
+function np(i){const r=Math.floor(i/10),k=i%10;return{x:r%2?90+k*87:873-k*87,y:425-r*80}}
+function hospital(x,y,s,on){c.save();c.translate(x,y);c.scale(s,s);shadow(80,100,120);
+if(on){const g=c.createRadialGradient(80,50,10,80,50,170);g.addColorStop(0,'rgba(255,240,150,.8)');g.addColorStop(1,'rgba(255,240,150,0)');c.fillStyle=g;c.fillRect(-100,-120,360,340)}
+let g=c.createLinearGradient(0,0,160,0);g.addColorStop(0,'#c3d3db');g.addColorStop(.4,'#fff');g.addColorStop(1,'#a9bcc6');c.fillStyle=g;rr(0,20,160,80,4);rr(-40,50,50,50,4);rr(150,50,50,50,4);
+c.fillStyle='#8fd0ff';for(let i=0;i<5;i++)for(let j=0;j<2;j++)c.fillRect(14+i*28,32+j*26,18,16);c.fillRect(-30,60,12,14);c.fillRect(-14,60,12,14);c.fillRect(160,60,12,14);c.fillRect(176,60,12,14);
+c.fillStyle='#5f7f8d';rr(66,68,30,32,3);c.fillStyle='#e03b4f';c.fillRect(72,-8,16,32);c.fillRect(64,0,32,16);c.restore()}
+function mapScreen(){let g=c.createLinearGradient(0,0,0,H);g.addColorStop(0,'#8fd3f0');g.addColorStop(.24,'#e4f6fb');g.addColorStop(.241,'#7cc576');g.addColorStop(1,'#3f8f4f');c.fillStyle=g;c.fillRect(0,0,W,H);
+c.fillStyle='rgba(255,255,255,.9)';[[0,30],[300,62],[560,22]].forEach(([x,y],i)=>{const cx=(x+T*12+i*220)%1100-100;c.beginPath();c.ellipse(cx,y,50,15,0,0,7);c.ellipse(cx+30,y-8,34,13,0,0,7);c.fill()});
+[[190,232],[520,232],[760,312],[300,392],[640,392],[40,312],[930,232]].forEach(([x,y])=>{shadow(x,y,16);c.fillStyle='#6b4a2a';c.fillRect(x-3,y-22,6,22);sph(x,y-30,16,'#2f9a4a')});
+hospital(730,50,.8,maxWeek>=40);
+c.lineCap='round';c.lineJoin='round';const seg=(w,col,f)=>{c.lineWidth=w;for(let i=0;i<39;i++){const a=np(i),b=np(i+1);c.strokeStyle=f?f(i):col;c.beginPath();c.moveTo(a.x,a.y);c.lineTo(b.x,b.y);c.stroke()}};
+c.strokeStyle='#2f3a44';c.lineWidth=42;c.beginPath();c.moveTo(873,185);c.lineTo(795,118);c.stroke();c.strokeStyle='#56626d';c.lineWidth=34;c.beginPath();c.moveTo(873,185);c.lineTo(795,118);c.stroke();
+seg(42,'#2f3a44');seg(34,'#56626d');c.setLineDash([10,12]);seg(3,0,i=>i+2<=maxWeek?'#ffd166':'rgba(255,255,255,.55)');c.setLineDash([]);
+c.textAlign='left';c.fillStyle='#0d3b4a';c.font='bold 32px Georgia,serif';c.fillText('Angela, guardiana de las 40 semanas',30,56);
+c.font='14px system-ui';c.fillText('Acompaña a Juana en el camino al hospital. Toca una semana desbloqueada.',30,86);c.fillText('Toca insumos · elige arma (1-9) · toca al zombi con su remedio · Juana tiene 10 vidas.',30,108);c.textAlign='center';
+for(let i=0;i<40;i++){const p=np(i),n=i+1,lock=n>maxWeek,cur=n===maxWeek;
+if(cur){c.strokeStyle='rgba(255,255,255,'+(.5+.4*Math.sin(T*4))+')';c.lineWidth=4;c.beginPath();c.arc(p.x,p.y,28+2*Math.sin(T*4),0,7);c.stroke()}
+sph(p.x,p.y,21,lock?'#4a5a63':cur?'#19a79a':'#f2b81c');c.fillStyle=lock?'#9fb0b8':'#fff';c.font=(lock||n===40?'16px':'bold 15px')+' system-ui';c.fillText(lock?'🔒':n===40?'👶':n,p.x,p.y+5)}
+const m=Math.min(maxWeek,40);c.fillStyle='#ffd166';c.beginPath();c.roundRect(370,468,220,46,23);c.fill();c.fillStyle='#3a2a00';c.font='bold 18px system-ui';c.fillText('Continuar: semana '+m,480,497);
+c.font='12px system-ui';c.fillStyle='#e9fff0';c.fillText('N: nueva partida · M: sonido',480,532)}
+function mapScreenOld(){let g=c.createLinearGradient(0,0,0,H);g.addColorStop(0,'#0d3b4a');g.addColorStop(1,'#07141b');c.fillStyle=g;c.fillRect(0,0,W,H);
+c.textAlign='center';c.fillStyle='#7cf5e4';c.font='bold 36px Georgia,serif';c.fillText('Angela, guardiana de las 40 semanas',W/2,58);
+c.font='15px system-ui';c.fillStyle='#cfe9ee';c.fillText('Toca los insumos que caen · elige un arma (1-9) · toca al zombi con su medicamento correcto',W/2,92);c.fillText('Juana tiene 3 vidas. Cada zombi vencido da premio. Toca una semana desbloqueada.',W/2,114);
+c.lineCap='round';c.lineWidth=10;for(let i=0;i<39;i++){const a=np(i),b=np(i+1);c.strokeStyle=i+2<=maxWeek?'#ffd166':'#2a4a57';c.beginPath();c.moveTo(a.x,a.y);c.lineTo(b.x,b.y);c.stroke()}
+for(let i=0;i<40;i++){const p=np(i),n=i+1,lock=n>maxWeek,cur=n===maxWeek;
+if(cur){c.strokeStyle='rgba(124,245,228,'+(.4+.4*Math.sin(T*4))+')';c.lineWidth=4;c.beginPath();c.arc(p.x,p.y,28+2*Math.sin(T*4),0,7);c.stroke()}
+sph(p.x,p.y,21,lock?'#4a5a63':cur?'#19a79a':'#f2b81c');c.fillStyle=lock?'#9fb0b8':'#fff';c.font=(lock||n===40?'16px':'bold 15px')+' system-ui';c.fillText(lock?'🔒':n===40?'👶':n,p.x,p.y+5)}
+const m=Math.min(maxWeek,40);c.fillStyle='#ffd166';c.beginPath();c.roundRect(370,468,220,46,23);c.fill();c.fillStyle='#3a2a00';c.font='bold 18px system-ui';c.fillText('Continuar: semana '+m,480,497);
+c.font='12px system-ui';c.fillStyle='#9fb8c0';c.fillText('N: nueva partida · M: sonido',480,532)}
+function mapClick(p){initA();const m=Math.min(maxWeek,40);if(p.x>370&&p.x<590&&p.y>468&&p.y<514){week=m;st='intro';return}for(let i=0;i<m;i++){const q=np(i);if(Math.hypot(p.x-q.x,p.y-q.y)<26){week=i+1;st='intro';tone(600,.1);return}}}
+function draw(){c.clearRect(0,0,W,H);scene();
+K.forEach(k=>{c.save();c.translate(k.x,k.py);c.rotate(Math.sin(T*3+k.x)*.3);c.shadowColor='#fff';c.shadowBlur=14;c.fillStyle='#ffd166';c.beginPath();c.roundRect(-14,-7,14,14,7);c.fill();c.fillStyle='#ff6f9f';c.beginPath();c.roundRect(0,-7,14,14,7);c.fill();c.restore();c.font='bold 11px system-ui';c.textAlign='center';c.fillStyle='#0d3b4a';c.fillText('+25',k.x,k.py-14)});
+S.forEach(s=>{const k=s.t/.3,x=s.x+(s.z.x-s.x)*k,y=s.y+(s.z.y-60-s.y)*k;c.font='24px system-ui';c.textAlign='center';c.fillText(WP[s.w].i,x,y)});
+P.forEach(p=>{c.globalAlpha=Math.max(0,p.l*2);c.fillStyle=p.col;c.beginPath();c.arc(p.x,p.y,3,0,7);c.fill()});c.globalAlpha=1;
+c.font='bold 14px system-ui';c.textAlign='center';F.forEach(f=>{c.globalAlpha=Math.max(0,Math.min(1,f.l));c.fillStyle=f.col||'#0d6b4a';c.fillText(f.t,f.x,f.y);c.globalAlpha=1});
+if(slow>0){c.fillStyle='rgba(120,200,255,.15)';c.fillRect(0,180,W,H)}
+if(st==='play'){const a=lives<3?.18*(.5+.5*Math.sin(T*6)):0;c.fillStyle='rgba(255,0,40,'+a+')';c.fillRect(0,0,W,H);hud();chips()}
+if(ces){c.fillStyle='rgba(0,0,0,.35)';c.fillRect(0,0,W,H);c.font='bold 30px Georgia,serif';c.fillStyle='#fff';c.textAlign='center';c.fillText(ces.final?'El doctor realiza la cesárea…':'¡Cesárea de emergencia!',W/2,230)}
+if(st==='trophy'){c.fillStyle='rgba(7,20,27,.9)';c.fillRect(0,0,W,H);confetti();trophy(W/2,400,Math.min(1,(T-trStart)*2.5));c.textAlign='center';c.fillStyle='#ffd166';c.font='bold 40px Georgia,serif';c.fillText('¡Semana '+(week-1)+' superada!',W/2,70);c.font='18px system-ui';c.fillStyle='#e6f6f8';c.fillText('Juana avanza a la semana '+week+'. ¡Sigue cuidándola!',W/2,104);const nw=WP.find(w=>w.w===week);if(nw)c.fillText('Nueva arma desbloqueada: '+nw.i+' '+nw.s,W/2,132);c.font='bold 17px system-ui';c.fillStyle='#ffd166';c.fillText('Toca o pulsa Enter para ver el camino de niveles',W/2,512)}
+if(st==='menu')mapScreen();if(0)panel('Angela, guardiana de las 40 semanas',['Eres Angela, obstetra interna. Protege a Juana, embarazada.','Las infecciones y complicaciones del embarazo son zombis.','Cada zombi muestra su gravedad y la complicación que causa.','',"Toca los insumos que caen para juntarlos (como el sol).",'Elige un arma y toca al zombi al que quieres atacar.','Cada zombi solo muere con su medicamento correcto.','Juana tiene 3 vidas: si un zombi la alcanza, pierde una.','Cada zombi vencido da premio: más insumos, y cada 5 una vida extra.','Ganas armas nuevas cada semana. Llega a la semana 40.','',week>1?'Progreso guardado: semana '+week+' (N = nueva partida)':''],'Toca o pulsa Enter para empezar');
+if(st==='intro'){const L=['Trimestre '+tri+' · Vidas: '+'♥'.repeat(lives),''],nw=WP.filter(w=>w.w===week),ne=TY.find(t=>t.w===week);
+nw.forEach(w=>{L.push({t:'Arma ganada: '+w.i+' '+w.s,col:'#7cf5e4'},w.d,'')});
+if(ne)L.push({t:'Nuevo enemigo: '+ne.n+' ('+SEV[ne.sev]+')',col:ne.col},'Complicación: '+ne.comp,'Tratamiento: '+WP[ne.cure].s,'');
+if(week===40)L.push({t:'¡Jefe final: ECLAMPSIA MAYOR!',col:'#ff1744'},'Usa Sulfato Mg para vencerla.','');
+L.push('Meta: vence 10 de cada enemigo para pasar. Si tardas, se complican.');
+panel('Semana '+week,L,'Toca o pulsa Enter para comenzar')}
+if(st==='over')panel('Juana se quedó sin vidas',['La buena atención prenatal salva vidas.','Volverás al último punto de control (semana 1, 14 o 28).'],'Toca o pulsa Enter para reintentar');
+if(st==='end')panel('¡Nació el bebé!',['Con tu cuidado, Juana llegó a la semana 40.','Madre y bebé están sanos y salvos.','Gracias, Angela: salvaste dos vidas.','','Control prenatal y atención oportuna salvan vidas.'],'Toca o pulsa Enter para volver al inicio')}
+// ---------- Lógica ----------
+function setT(z,t){Object.assign(z,t,{need:t.boss?NEED[5]:NEED[t.sev]});z.hp=z.need;z.age=0}
+function spawn(boss){const a=TY.filter(t=>t.w<=week&&(qk[t.n]||0)+Z.filter(q=>q.n===t.n).length<10);if(!boss&&!a.length)return;const t=boss?BOSS:a[Math.random()<.35?a.length-1:Math.floor(Math.random()*a.length)],side=Math.floor(Math.random()*3),z={x:side===0?-30:side===1?W+30:480,y:side===2?195:rnd(240,510),dir:1,ph:Math.random()*6,sel:0};setT(z,t);z.spd*=.55*(1+week*.006);Z.push(z);tone(90,.5,'sawtooth',.05,-30)}
+function say(t,x,y,col){F.push({t,x,y,l:1.8,col})}
+const need10=()=>TY.filter(t=>t.w<=week),quotaDone=()=>need10().every(t=>(qk[t.n]||0)>=10),prog=()=>{const a=need10();return a.reduce((s,t)=>s+Math.min(10,qk[t.n]||0),0)/(10*a.length)};
+const SN={'Infección urinaria':'ITU','Corioamnionitis':'Corio','Preeclampsia':'Preecl.','Hemorragia':'Hemorr.','Diabetes gestacional':'Diabetes'};
+function chips(){let x=20;c.font='bold 11px system-ui';c.textAlign='left';c.fillStyle='#0d3b4a';c.fillText('Meta:',x,174);x+=38;
+need10().forEach(t=>{const k=Math.min(10,qk[t.n]||0),tx=(k>=10?'✔ ':'')+(SN[t.n]||t.n.split(' ')[0])+' '+k+'/10',w=c.measureText(tx).width+12;c.fillStyle='#0b1a22dd';rr(x,160,w,18,9);c.globalAlpha=.9;c.fillStyle=t.col;rr(x,160,Math.max(10,w*k/10),18,9);c.globalAlpha=1;c.strokeStyle='#000b';c.lineWidth=3;c.strokeText(tx,x+6,173);c.fillStyle='#fff';c.fillText(tx,x+6,173);x+=w+5})}
+function kill(z){if(!z.boss)qk[z.n]=(qk[z.n]||0)+1;Z.splice(Z.indexOf(z),1);say(z.n+' controlada',z.x,z.y-140,'#0d6b4a');
+const r=10+10*z.sev;ins+=r;kills++;say('Premio +'+r+' 💊',z.x,z.y-165,'#b8860b');
+if(kills%5===0){if(lives<10){lives++;say('¡Premio especial: +1 vida para Juana!',J.x,J.y-170,'#d81b60')}else{ins+=60;say('¡Premio especial: +60 insumos!',J.x,J.y-170,'#d81b60')}jingle()}for(let i=0;i<12;i++)P.push({x:z.x,y:z.y-50,vx:rnd(-120,120),vy:rnd(-140,40),l:.5,col:z.col});tone(220,.25,'triangle',.1,300)}
+function apply(s){const w=WP[s.w],z=s.z;if(!Z.includes(z))return;
+for(let i=0;i<5;i++)P.push({x:z.x,y:z.y-60,vx:rnd(-80,80),vy:rnd(-80,40),l:.3,col:'#fff'});
+if(s.w===4){slow=6;say('¡Enemigos frenados!',z.x,z.y-140,'#1f6fb8');return}
+if(s.w===z.cure){tone(660,.2,'triangle',.12);kill(z)}
+else{z.hp-=s.w===0?.5:.2;tone(150,.2,'sawtooth',.08);say('No es el indicado. Usa: '+WP[z.cure].s,z.x,z.y-140,'#b3261e');if(z.hp<=0)kill(z)}}
+function use(z){tgt=z;if(!unl(sel)||wcd[sel]>0||ins<WP[sel].cost){tone(120,.15,'square',.08);say(!unl(sel)?'Arma aún no ganada':wcd[sel]>0?'Recargando…':'Faltan insumos',z.x,z.y-140,'#b3261e');return}
+ins-=WP[sel].cost;wcd[sel]=WP[sel].cd;S.push({x:An.x,y:An.y-60,z,w:sel,t:0});An.tx=z.x+(z.x>J.x?60:-60);An.ty=z.y;An.dir=z.x>An.x?1:-1;tone(700,.1,'square',.05,300)}
+function cesarea(){if(st!=='play'||ces||cesUsed||week<28)return;cesUsed=true;ces={t:3,final:false}}
+function update(dt){if(st!=='play')return;tri=week<=13?1:week<=27?2:3;
+if(ces){ces.t-=dt;if(ces.t<=0){Z=[];S=[];ces.final?victory():jingle();if(ces.final){st='end';try{localStorage.setItem('angSem',1)}catch(e){}}ces=null}return}
+lt+=dt;J.hurt-=dt;slow=Math.max(0,slow-dt);wcd=wcd.map(x=>Math.max(0,x-dt*2.5));
+const ax=An.tx-An.x,ay=An.ty-An.y,ad=Math.hypot(ax,ay);An.mv=ad>6?1:0;if(ad>6){An.x+=ax/ad*380*dt;An.y+=ay/ad*380*dt}
+J.wt-=dt;if(J.wt<=0){J.wt=4;J.tx=rnd(480,640);J.ty=rnd(360,450);An.tx=J.x-80;An.ty=J.y+20}const jd=Math.hypot(J.tx-J.x,J.ty-J.y);if(jd>4){J.x+=(J.tx-J.x)/jd*20*dt;J.y+=(J.ty-J.y)/jd*20*dt}
+dp-=dt;if(dp<=0){dp=2.4;K.push({x:rnd(60,900),py:150,ty:rnd(230,500),l:10})}
+K.forEach(k=>{k.py=Math.min(k.ty,k.py+110*dt);k.l-=dt});K=K.filter(k=>k.l>0);
+[0,1].forEach(i=>{nt[i]-=dt;if(nt[i]<=0&&K.length){nt[i]=5;const k=K.shift();ins+=25;say('+25 (enfermera)',k.x,k.py-20,'#0d6b4a');tone(900,.1,'sine',.08)}});
+sp-=dt;if(sp<=0){sp=Math.max(1.2,2.4-week*.03);spawn()}if(week===40&&!bossSp&&quotaDone()){bossSp=1;spawn(true)}
+const f=slow>0?.5:1;
+[...Z].forEach(z=>{z.age+=dt;const ex=J.x-z.x,ey=J.y-z.y,d=Math.hypot(ex,ey);z.dir=ex>=0?1:-1;
+if(z.ev!=null&&z.age>12&&TY[z.ev].w<=week+4){const n=TY[z.ev];setT(z,n);say('¡Se complicó: '+n.n+'!',z.x,z.y-150,'#b3261e');tone(100,.5,'sawtooth',.12,-40)}
+if(d<36){Z.splice(Z.indexOf(z),1);if(J.hurt<=0){lives--;J.hurt=1.5;say('¡Juana perdió una vida!',J.x,J.y-150,'#b3261e');tone(160,.8,'sawtooth',.2,-100)}}else{z.x+=ex/d*z.spd*f*dt;z.y+=ey/d*z.spd*f*dt}});
+S.forEach(s=>{s.t+=dt;if(s.t>=.3){apply(s);s.dead=1}});S=S.filter(s=>!s.dead);
+P.forEach(p=>{p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=300*dt;p.l-=dt});P=P.filter(p=>p.l>0);F.forEach(q=>{q.y-=22*dt;q.l-=dt});F=F.filter(q=>q.l>0);
+audio(dt);
+if(lives<=0){st='over';return}
+if(week<40&&quotaDone()){week++;maxWeek=Math.max(maxWeek,week);try{localStorage.setItem('angSem',week);localStorage.setItem('angMax',maxWeek)}catch(e){}Z=[];S=[];victory();trStart=T;st='trophy'}
+else if(week===40&&bossSp&&!Z.some(z=>z.boss))ces={t:3.5,final:true}}
+// ---------- Entrada ----------
+function pt(e){const r=cv.getBoundingClientRect(),s=Math.min(r.width/W,r.height/H);return{x:(e.clientX-r.left-(r.width-W*s)/2)/s,y:(e.clientY-r.top-(r.height-H*s)/2)/s}}
+function adv(){initA();if(st==='menu'){week=Math.min(maxWeek,40);st='intro'}else if(st==='trophy')st='menu';else if(st==='intro'){startLevel();st='play'}
+else if(st==='over'){week=week<14?1:week<28?14:28;lives=10;cesUsed=false;st='intro'}else if(st==='end'){week=1;maxWeek=41;try{localStorage.setItem('angMax',41)}catch(e){}lives=10;cesUsed=false;st='menu'}}
+cv.addEventListener('pointerdown',e=>{const p=pt(e);if(st==='menu'){mapClick(p);return}if(st!=='play'){adv();return}if(ces)return;
+if(p.y>=70&&p.y<=154){const i=Math.floor((p.x-20)/80);if(i>=0&&i<WP.length&&p.x-20-i*80<74){sel=i;tone(500,.06);return}}
+if(week>=28&&!cesUsed&&Math.hypot(p.x-900,p.y-480)<42){cesarea();return}
+const k=K.findIndex(q=>Math.hypot(q.x-p.x,q.py-p.y)<34);if(k>=0){const q=K.splice(k,1)[0];ins+=25;say('+25',q.x,q.py-20,'#0d6b4a');tone(900,.1,'sine',.1);return}
+let best=null,bd=1e9;Z.forEach(z=>{const s=(.6+.55*z.y/H)*(z.boss?1.7:1),dx=Math.abs(p.x-z.x),dy=p.y-(z.y-60*s);if(dx<34*s&&p.y>z.y-150*s&&p.y<z.y+15){const d=dx+Math.abs(dy);if(d<bd){bd=d;best=z}}});
+if(best)use(best)});
+addEventListener('keydown',e=>{const k=e.key.toLowerCase();if(k===' '||k.startsWith('arrow'))e.preventDefault();
+if(k==='enter'||(k===' '&&st!=='play'))adv();else if(k>='1'&&k<='9'&&st==='play')sel=+k-1;else if(k==='c')cesarea();
+else if(k==='m'){mute=!mute;if(amb)amb.gain.value=mute?0:.05}else if(k==='n'&&st==='menu'){week=1;maxWeek=1;lives=10;cesUsed=false;try{localStorage.setItem('angMax',1)}catch(e){}try{localStorage.setItem('angSem',1)}catch(e){}}});
+let last=0;function loop(t){requestAnimationFrame(loop);const dt=Math.min(.05,(t-last)/1000||0);last=t;T+=dt;update(dt);draw()}requestAnimationFrame(loop);
+</script></body></html>
